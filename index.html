@@ -461,6 +461,7 @@
     <button id="prev" title="Anterior">‹</button>
     <button id="play" title="Play/Pausa">⏸</button>
     <button id="next" title="Siguiente">›</button>
+    <button id="music" title="Música de fondo">🔇</button>
   </div>
 </div>
 
@@ -518,6 +519,136 @@
 
   goTo(0);
   start();
+</script>
+
+<script>
+  (function () {
+    var initd = false, playing = false;
+    var ctx = null, master = null, timerId = null, nextTime = 0, chordIdx = 0;
+    var CHORD_DUR = 2.2;
+    var CHORDS = [
+      { root: 60, intervals: [0, 4, 7, 11, 14] },
+      { root: 57, intervals: [0, 3, 7, 10, 14] },
+      { root: 62, intervals: [0, 3, 7, 10, 14] },
+      { root: 55, intervals: [0, 4, 7, 10, 14, 16] }
+    ];
+    function midi(n) { return 440 * Math.pow(2, (n - 69) / 12); }
+
+    function init() {
+      if (initd) return;
+      initd = true;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0;
+      var filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 1600;
+      master.connect(filter);
+      filter.connect(ctx.destination);
+    }
+
+    function padVoice(t, freq, i) {
+      var o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = freq;
+      var o2 = ctx.createOscillator();
+      o2.type = 'sine';
+      o2.frequency.value = freq * 2;
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.055, t + Math.min(0.6, CHORD_DUR / 3));
+      g.gain.setValueAtTime(0.055, t + CHORD_DUR * 0.7);
+      g.gain.linearRampToValueAtTime(0.0001, t + CHORD_DUR + 0.4);
+      var p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+      if (p && p.pan !== undefined) p.pan.value = (i % 3 === 0) ? -0.4 : (i % 3 === 1 ? 0.4 : 0);
+      o.connect(g); o2.connect(g);
+      if (p) { g.connect(p); p.connect(master); } else { g.connect(master); }
+      o.start(t); o.stop(t + CHORD_DUR + 0.5);
+      o2.start(t); o2.stop(t + CHORD_DUR + 0.5);
+    }
+
+    function bassVoice(t, freq) {
+      var o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.085, t + 0.15);
+      g.gain.setValueAtTime(0.085, t + CHORD_DUR * 0.6);
+      g.gain.linearRampToValueAtTime(0.0001, t + CHORD_DUR + 0.3);
+      o.connect(g); g.connect(master);
+      o.start(t); o.stop(t + CHORD_DUR + 0.4);
+    }
+
+    function compTick(t, freq, off) {
+      var t0 = off ? t + CHORD_DUR * 0.78 + 0.06 : t + 0.02;
+      var o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = freq;
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.05, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.35);
+      o.connect(g); g.connect(master);
+      o.start(t0); o.stop(t0 + 0.4);
+    }
+
+    function playChord(t, chord) {
+      bassVoice(t, midi(chord.root - 12));
+      chord.intervals.forEach(function (iv, i) { padVoice(t, midi(chord.root + iv), i); });
+      compTick(t, midi(chord.root + 7), false);
+      compTick(t, midi(chord.root + 11), true);
+    }
+
+    function schedule() {
+      if (!playing) return;
+      var c = CHORDS[chordIdx % CHORDS.length];
+      playChord(nextTime, c);
+      chordIdx++;
+      nextTime += CHORD_DUR;
+      timerId = setTimeout(schedule, CHORD_DUR * 1000 - 80);
+    }
+
+    function fadeTo(v) {
+      if (!master) return;
+      master.gain.cancelScheduledValues(ctx.currentTime);
+      master.gain.linearRampToValueAtTime(v, ctx.currentTime + 0.6);
+    }
+
+    function setIcon() {
+      var b = document.getElementById('music') || document.getElementById('musicBtn');
+      if (b) b.textContent = playing ? '🔊' : '🔇';
+    }
+
+    function toggle() {
+      if (!initd) init();
+      if (ctx.state === 'suspended') ctx.resume();
+      if (playing) {
+        playing = false;
+        clearTimeout(timerId);
+        fadeTo(0);
+      } else {
+        playing = true;
+        nextTime = ctx.currentTime + 0.1;
+        chordIdx = 0;
+        fadeTo(0.11);
+        schedule();
+      }
+      setIcon();
+    }
+
+    window.gmMusicToggle = toggle;
+
+    document.getElementById('music') && document.getElementById('music').addEventListener('click', toggle);
+
+    function autoStart() {
+      if (!initd) init();
+      if (!playing && ctx.state !== 'suspended') toggle();
+    }
+    document.addEventListener('pointerdown', autoStart, { once: true });
+    document.addEventListener('keydown', autoStart, { once: true });
+  })();
 </script>
 </body>
 </html>
